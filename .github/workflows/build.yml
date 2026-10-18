@@ -1,8 +1,12 @@
 name: Build desktop applications
 on:
   workflow_dispatch:
+  pull_request:
+    branches: [main]
   push:
     tags: ['v*']
+permissions:
+  contents: write
 jobs:
   desktop:
     strategy:
@@ -25,9 +29,22 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm test
+      - run: pnpm exec playwright install chromium
+      - run: pnpm test:e2e
       - run: pnpm run ${{ matrix.script }}
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      - name: Smoke test packaged macOS application
+        if: runner.os == 'macOS'
+        run: |
+          npm install -g @openai/codex
+          export PF_CODEX_SMOKE_REQUIRED=1
+          if [ "$(uname -m)" = "arm64" ]; then
+            export PF_ELECTRON_EXECUTABLE="$PWD/release/mac-arm64/AI Presentation Free.app/Contents/MacOS/AI Presentation Free"
+          else
+            export PF_ELECTRON_EXECUTABLE="$PWD/release/mac/AI Presentation Free.app/Contents/MacOS/AI Presentation Free"
+          fi
+          pnpm test:desktop
       - uses: actions/upload-artifact@v4
         with:
           name: AI-Presentation-Free-${{ runner.os }}
@@ -35,3 +52,22 @@ jobs:
             release/*.exe
             release/*.dmg
           if-no-files-found: error
+  publish:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: desktop
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: AI-Presentation-Free-*
+          path: release-assets
+          merge-multiple: true
+      - name: Publish release after all checks and macOS smoke test
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd release-assets
+          sha256sum *.dmg *.exe > SHA256SUMS.txt
+          cd ..
+          gh release create "$GITHUB_REF_NAME" release-assets/* --title "AI Presentation Free $GITHUB_REF_NAME" --notes-file docs/release-0.3.0.md --verify-tag
