@@ -15,8 +15,8 @@
     "test": "node --test tests/*.test.js",
     "test:e2e": "playwright test",
     "test:desktop": "node tests/desktop-smoke.cjs",
-    "dist:win": "npm run build && electron-builder --win nsis portable",
-    "dist:mac": "npm run build && electron-builder --mac dmg --x64 --arm64"
+    "dist:win": "npm run build && electron-builder --win nsis portable --publish never",
+    "dist:mac": "npm run build && electron-builder --mac dmg --x64 --arm64 --publish never"
   },
   "dependencies": {
     "jszip": "^3.10.1",
