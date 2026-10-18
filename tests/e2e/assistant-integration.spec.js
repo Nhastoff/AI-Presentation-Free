@@ -22,7 +22,7 @@ async function openEditor(page) {
     };
   });
   await page.goto('/');
-  await page.getByRole('button', { name: '✦ Помощник', exact: true }).click();
+  await page.getByRole('button', { name: 'AI', exact: true }).click();
   await expect(page.getByText('Codex подключён', { exact: true })).toBeVisible();
   await page.getByLabel('Сообщение помощнику').fill('Начать работу с презентацией');
   await page.getByRole('button', { name: 'Отправить', exact: true }).click();
