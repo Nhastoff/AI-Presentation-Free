@@ -125,7 +125,7 @@ class CodexService {
     });
     child.stderr.on('data', () => {}); // May include paths and auth details: do not log or send to renderer.
     try {
-      await this.request('initialize', { clientInfo: { name: 'presentation_free', title: 'Presentation Free', version: '0.3.1' }, capabilities: { experimentalApi: true } });
+      await this.request('initialize', { clientInfo: { name: 'presentation_free', title: 'Presentation Free', version: require('../package.json').version }, capabilities: { experimentalApi: true } });
       this.write({ method: 'initialized', params: {} });
       this.connected = true;
       return await this.refresh();
