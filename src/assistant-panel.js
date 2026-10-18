@@ -21,6 +21,9 @@ export function mountAssistant(adapter, bridge = window.presentationAI) {
   toggle.title = 'Открыть AI помощника';
   toggle.setAttribute('aria-controls', host.id);
   toggle.setAttribute('aria-expanded', 'false');
+  const launcher = el('nav', 'ai-launcher');
+  launcher.setAttribute('aria-label', 'Инструменты AI');
+  launcher.append(toggle);
   const handle = el('div', 'ai-resizer');
   handle.setAttribute('role', 'separator');
   handle.setAttribute('aria-label', 'Ширина помощника');
@@ -76,7 +79,8 @@ export function mountAssistant(adapter, bridge = window.presentationAI) {
   actions.append(attach, mode, send, stop);
   form.append(input, imageGenerationLabel, imageGenerationHelp, actions);
   host.append(handle, header, connection, toolbar, messages, usage, notice, attachmentsList, form);
-  document.body.append(host, toggle);
+  document.body.append(host, launcher);
+  document.body.classList.add('ai-ready');
   let documentId = null, conversations = [], active, attachments = [], busy = false, connected = false, width = 390, streaming = null, historyGeneration = 0;
   let saveTimer;
   let imageGenerationSupported = false, toolAttachments = [];
@@ -181,7 +185,7 @@ export function mountAssistant(adapter, bridge = window.presentationAI) {
       row.append(button('Применить изменения', async () => apply(message), 'Применить'), button('Отклонить изменения', async () => { try { await adapter.rejectProposal?.(proposal); message.proposalState = 'Отклонено'; renderMessages(); save(); } catch (error) { showError(error); } }, 'Отклонить'));
       card.append(row);
     }
-    if (message.proposalState === 'Применено' && !message.proposalRestored) card.append(button('Отменить изменения', async () => { try { await adapter.undo(message.proposal); message.proposalState = 'Отменено'; renderMessages(); save(); } catch (error) { showError(error); } }, 'Отменить'));
+    if (message.proposalState === 'Применено' && !message.proposalRestored) card.append(button('Отменить изменения', async () => { try { const result = await adapter.undo(message.proposal); if (result?.undone !== true) throw new Error('Редактор не подтвердил отмену изменений.'); message.proposalState = 'Отменено'; renderMessages(); save(); } catch (error) { showError(error); } }, 'Отменить'));
     bubble.append(card);
   }
   async function apply(message) {
@@ -291,18 +295,28 @@ export function mountAssistant(adapter, bridge = window.presentationAI) {
     if (event.type === 'error') { showError(event); setBusy(false); streaming = null; save(); }
     if (event.type === 'done') { status.textContent = event.cancelled ? 'Остановлено' : 'Готово'; setBusy(false); streaming = null; save(); }
   });
-  const setWidth = value => { width = Math.max(320, Math.min(value, window.innerWidth - 300, 680)); document.documentElement.style.setProperty('--ai-panel-width', `${width}px`); window.dispatchEvent(new Event('resize')); };
+  const launcherWidth = () => launcher.getBoundingClientRect().width;
+  const setWidth = value => { width = Math.max(320, Math.min(value, window.innerWidth - launcherWidth() - 300, 680)); document.documentElement.style.setProperty('--ai-panel-width', `${width}px`); window.dispatchEvent(new Event('resize')); };
   handle.onpointerdown = event => {
     handle.setPointerCapture(event.pointerId);
-    handle.onpointermove = move => setWidth(window.innerWidth - move.clientX);
+    handle.onpointermove = move => setWidth(window.innerWidth - launcherWidth() - move.clientX);
     handle.onpointerup = () => { handle.onpointermove = null; };
   };
   handle.onkeydown = event => { if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') { event.preventDefault(); setWidth(width + (event.key === 'ArrowLeft' ? 20 : -20)); } };
   const unsubscribeDocument = adapter.subscribe?.(event => {
     if (event?.type === 'proposal') { receiveProposal(event.proposal); return; }
+    if (documentId === adapter.getDocumentId() && active) {
+      const appliedMessages = active.messages.filter(message => message.proposal && !message.proposalRestored && ['Применено', 'Отменено'].includes(message.proposalState));
+      if (appliedMessages.length) {
+        const states = adapter.getProposalStates?.(appliedMessages.map(message => message.proposal.id));
+        let changed = false;
+        for (const message of appliedMessages) if (states?.[message.proposal.id] && message.proposalState !== states[message.proposal.id]) { message.proposalState = states[message.proposal.id]; changed = true; }
+        if (changed) { renderMessages(); scheduleSave(); }
+      }
+    }
     syncDocument();
   });
   syncDocument(); updateConnection(null);
   bridge?.status?.().then(updateConnection).catch(showError);
-  return { refresh: syncDocument, open: () => setOpen(true), receiveProposal, destroy() { clearTimeout(saveTimer); unsubscribeEvents?.(); unsubscribeDocument?.(); host.remove(); toggle.remove(); document.body.classList.remove('ai-open'); } };
+  return { refresh: syncDocument, open: () => setOpen(true), receiveProposal, destroy() { clearTimeout(saveTimer); unsubscribeEvents?.(); unsubscribeDocument?.(); host.remove(); launcher.remove(); document.body.classList.remove('ai-open', 'ai-ready'); } };
 }

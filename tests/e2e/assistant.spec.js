@@ -3,7 +3,7 @@ import { test, expect } from '@playwright/test';
 test('image generation opts in per request and registers generated assets without storing bytes in history', async ({ page }) => {
   await page.goto('/');
   await page.evaluate(async () => {
-    document.querySelectorAll('.ai-panel,.ai-toggle').forEach(node => node.remove());
+    document.querySelectorAll('.ai-panel,.ai-launcher,.ai-toggle').forEach(node => node.remove());
     const { mountAssistant } = await import('/src/assistant-panel.js');
     const dataUrl = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j8ioAAAAASUVORK5CYII=';
     let emit;
@@ -80,14 +80,14 @@ test('assistant streams, retains conversation when collapsed and previews change
   await page.goto('/');
   await page.evaluate(async () => {
     // Isolate the panel contract from an installed/authenticated Codex process.
-    document.querySelectorAll('.ai-panel,.ai-toggle').forEach(node => node.remove());
+    document.querySelectorAll('.ai-panel,.ai-launcher,.ai-toggle').forEach(node => node.remove());
     const { mountAssistant } = await import('/src/assistant-panel.js');
     let emit;
     const stored = new Map();
     window.__assistantApplied = 0;
     window.__assistantPanel = mountAssistant({
       tools: [], getDocumentId: () => 'test-document', getContext: () => ({ documentId: 'test-document' }),
-      applyProposal: async () => { window.__assistantApplied++; }, undo: async () => { window.__assistantApplied--; },
+      applyProposal: async () => { window.__assistantApplied++; }, undo: async () => { window.__assistantApplied--; return { undone: true }; },
     }, {
       status: async () => ({ connected: true }),
       onEvent: callback => { emit = callback; return () => {}; },

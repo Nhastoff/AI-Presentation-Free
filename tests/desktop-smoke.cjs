@@ -110,6 +110,29 @@ const { pathToFileURL } = require('node:url');
     assert(Object.keys(archive.files).some(name => name.startsWith('ppt/media/') && name.endsWith('.png')));
     assert.deepEqual(pageErrors, []);
     console.log('Native PPTX export contains editable text and an embedded PNG.');
+    const { validateDeck } = await import(pathToFileURL(path.join(root, 'src/model.js')).href);
+    const { getDeckRevision } = await import(pathToFileURL(path.join(root, 'src/assistant-tools.js')).href);
+    const beforeReplacement = validateDeck(project);
+    const replacement = { id: project.id, title: 'AI replacement', slides: Array.from({ length: 4 }, (_, index) => ({ id: `undo-slide-${index}`, background: '#FFFFFF', elements: [{ id: `undo-title-${index}`, type: 'text', text: `Replacement ${index + 1}`, x: 80, y: 80, w: 600, h: 80 }] })) };
+    await application.evaluate(({ BrowserWindow }, toolEvent) => BrowserWindow.getAllWindows()[0].webContents.send('assistant:event', toolEvent), {
+      type: 'tool', requestId: 'desktop-undo-proof', documentId: project.id, name: 'presentation_edit',
+      arguments: { requestId: 'desktop-replacement', baseRevision: getDeckRevision(beforeReplacement), summary: 'Desktop replacement and undo', operations: [{ type: 'replace_deck', deck: replacement }] },
+    });
+    await page.getByRole('button', { name: 'Применить изменения', exact: true }).click();
+    assert.equal(await page.locator('.slide-row').count(), 4);
+    await page.locator('#stage [data-element="undo-title-0"]').click();
+    await page.getByRole('button', { name: 'Отменить изменения', exact: true }).click();
+    assert.equal(await page.locator('.slide-row').count(), 1);
+    assert.equal(await page.getByLabel('Название презентации').inputValue(), project.title);
+    assert.equal(await page.locator('#stage [data-element="desktop-image"] img').getAttribute('src'), project.slides[0].elements[1].src);
+    assert.equal(await page.locator('.ai-proposal-state').innerText(), 'Отменено');
+    await page.locator('[data-action="redo"]').first().click();
+    assert.equal(await page.locator('.slide-row').count(), 4);
+    assert.equal(await page.locator('.ai-proposal-state').innerText(), 'Применено');
+    await page.getByRole('button', { name: 'Отменить изменения', exact: true }).click();
+    assert.equal(await page.locator('.slide-row').count(), 1);
+    assert.deepEqual(pageErrors, []);
+    console.log('Packaged assistant undo restores the original slide and image after object selection; redo and second undo also pass.');
     await application.close(); application = null;
     const reopened = await launch();
     const restored = await reopened.evaluate(documentId => window.presentationAI.historyLoad({ documentId }), documentId);

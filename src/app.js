@@ -497,7 +497,11 @@ async function action(name) {
     case "image":
       document.querySelector("#image-file").click();
       break;
-    case "undo":
+    case "undo": {
+      // Selecting an object can leave an unchanged checkpoint. Skip it rather
+      // than consuming an undo click without changing the document.
+      const currentSnapshot = JSON.stringify(deck);
+      while (history.length && history.at(-1) === currentSnapshot) history.pop();
       if (history.length) {
         future.push(JSON.stringify(deck));
         deck = JSON.parse(history.pop());
@@ -507,6 +511,7 @@ async function action(name) {
         render();
       }
       break;
+    }
     case "redo":
       if (future.length) {
         history.push(JSON.stringify(deck));
@@ -924,7 +929,7 @@ window.addEventListener("beforeunload", () => {
 });
 
 // The assistant shares the editor's document, validation and undo history.
-const assistantListeners = new Set(), assistantProposals = new Map(), assistantApplied = new Set(), assistantUndoRevisions = new Map();
+const assistantListeners = new Set(), assistantProposals = new Map(), assistantApplied = new Set(), assistantUndoStates = new Map();
 let assistantAttachments = [], assistantAttachmentDocument = deck.id;
 const assistantSelection = () => ({ slideId: slide().id, elementIds: selectedElements().map(e => e.id) });
 const assistantAdapter = {
@@ -941,14 +946,40 @@ const assistantAdapter = {
     const next = applyProposal(deck, stored, { appliedIds: [...assistantApplied] });
     change(() => { deck = next; slideIndex = Math.min(slideIndex, deck.slides.length - 1); selection = null; });
     assistantApplied.add(stored.id); assistantProposals.delete(stored.id);
-    assistantUndoRevisions.set(stored.id, getDeckRevision(deck));
+    assistantUndoStates.set(stored.id, { beforeSnapshot: history.at(-1), beforeRevision: stored.baseRevision, afterRevision: getDeckRevision(deck) });
+    // These snapshots share the editor history's strings; bound references to
+    // old documents as history entries age out.
+    if (assistantUndoStates.size > 20) assistantUndoStates.delete(assistantUndoStates.keys().next().value);
     return { applied: true };
   },
   rejectProposal: proposal => { assistantProposals.delete(proposal.id); },
   undo: proposal => {
-    if (!proposal || assistantUndoRevisions.get(proposal.id) !== getDeckRevision(deck)) throw new Error('После этой правки документ изменился. Используйте обычную отмену в редакторе.');
-    assistantUndoRevisions.delete(proposal.id);
-    return action('undo');
+    const state = proposal && assistantUndoStates.get(proposal.id);
+    if (!state) throw new Error('Снимок для отмены больше недоступен. Используйте обычную отмену в редакторе.');
+    if (state.afterRevision !== getDeckRevision(deck)) throw new Error('После этой правки документ изменился. Используйте обычную отмену в редакторе.');
+    const restored = JSON.parse(state.beforeSnapshot);
+    if (restored.id !== deck.id || getDeckRevision(restored) !== state.beforeRevision) throw new Error('Не удалось проверить снимок для отмены.');
+    const historyIndex = history.lastIndexOf(state.beforeSnapshot);
+    future.push(JSON.stringify(deck));
+    // Remove this transaction and any identical selection checkpoints above it.
+    if (historyIndex >= 0) history.splice(historyIndex);
+    else history = [];
+    deck = restored;
+    slideIndex = Math.min(slideIndex, deck.slides.length - 1);
+    selection = null;
+    persist();
+    render();
+    return { undone: true, revision: getDeckRevision(deck) };
+  },
+  getProposalStates: ids => {
+    const revision = getDeckRevision(deck);
+    return Object.fromEntries(ids.flatMap(id => {
+      const state = assistantUndoStates.get(id);
+      if (!state) return [];
+      if (revision === state.afterRevision) return [[id, 'Применено']];
+      if (revision === state.beforeRevision) return [[id, 'Отменено']];
+      return [];
+    }));
   },
   subscribe: callback => { assistantListeners.add(callback); return () => assistantListeners.delete(callback); },
 };
