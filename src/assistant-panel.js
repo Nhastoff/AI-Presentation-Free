@@ -14,9 +14,11 @@ export function mountAssistant(adapter, bridge = window.presentationAI) {
   const host = el('aside', 'ai-panel');
   host.id = 'assistant-panel';
   host.hidden = true;
-  host.setAttribute('aria-label', 'Помощник Codex');
-  const toggle = el('button', 'ai-toggle', '✦ Помощник');
+  host.setAttribute('aria-label', 'AI помощник');
+  const toggle = el('button', 'ai-toggle', 'AI');
   toggle.type = 'button';
+  toggle.setAttribute('aria-label', 'AI');
+  toggle.title = 'Открыть AI помощника';
   toggle.setAttribute('aria-controls', host.id);
   toggle.setAttribute('aria-expanded', 'false');
   const handle = el('div', 'ai-resizer');
@@ -25,7 +27,7 @@ export function mountAssistant(adapter, bridge = window.presentationAI) {
   handle.setAttribute('aria-orientation', 'vertical');
   handle.tabIndex = 0;
   const header = el('header', 'ai-header');
-  header.append(el('strong', '', '✦ Помощник Codex'));
+  header.append(el('strong', '', 'AI помощник'));
   const close = button('Свернуть', () => setOpen(false), '×');
   header.append(close);
   const connection = el('div', 'ai-connection');
@@ -38,10 +40,10 @@ export function mountAssistant(adapter, bridge = window.presentationAI) {
   const toolbar = el('div', 'ai-toolbar');
   const conversationsSelect = el('select');
   conversationsSelect.setAttribute('aria-label', 'История разговоров');
-  const newChat = button('Новый разговор', () => { if (busy) return; active = makeConversation(); conversations.push(active); renderHistory(); renderMessages(); save(); }, '+');
+  const newChat = button('Новый разговор', () => { if (busy) return; active = makeConversation(); generatedAssets.clear(); toolAttachments = []; conversations.push(active); renderHistory(); renderMessages(); save(); }, '+');
   const clear = button('Удалить историю этой презентации', async () => {
     if (busy || !window.confirm('Удалить историю разговоров этой презентации?')) return;
-    conversations = [makeConversation()]; active = conversations[0]; renderHistory(); renderMessages(); await save();
+    conversations = [makeConversation()]; active = conversations[0]; generatedAssets.clear(); toolAttachments = []; renderHistory(); renderMessages(); await save();
   }, 'Очистить');
   toolbar.append(conversationsSelect, newChat, clear);
   const messages = el('div', 'ai-messages');
@@ -55,6 +57,10 @@ export function mountAssistant(adapter, bridge = window.presentationAI) {
   input.placeholder = 'Например: создай 5 слайдов о путешествии…';
   input.setAttribute('aria-label', 'Сообщение помощнику');
   input.rows = 3;
+  const imageGenerationLabel = el('label', 'ai-image-generation');
+  const imageGeneration = el('input'); imageGeneration.type = 'checkbox'; imageGeneration.disabled = true;
+  imageGenerationLabel.append(imageGeneration, document.createTextNode('Генерировать изображения в этом запросе'));
+  const imageGenerationHelp = el('small', 'ai-image-generation-help', 'Использует лимиты Codex вашего ChatGPT. Отдельный API-ключ не нужен.');
   const actions = el('div', 'ai-composer-actions');
   const attach = button('Прикрепить материалы', pickAttachments, '＋ Файл');
   const mode = el('select');
@@ -68,35 +74,43 @@ export function mountAssistant(adapter, bridge = window.presentationAI) {
   const stop = button('Остановить выполнение', async () => { try { await bridge?.stop({ conversationId: active.id }); status.textContent = 'Остановка…'; } catch (error) { showError(error); } }, 'Стоп');
   stop.hidden = true;
   actions.append(attach, mode, send, stop);
-  form.append(input, actions);
+  form.append(input, imageGenerationLabel, imageGenerationHelp, actions);
   host.append(handle, header, connection, toolbar, messages, usage, notice, attachmentsList, form);
   document.body.append(host, toggle);
   let documentId = null, conversations = [], active, attachments = [], busy = false, connected = false, width = 390, streaming = null, historyGeneration = 0;
   let saveTimer;
+  let imageGenerationSupported = false, toolAttachments = [];
+  const generatedAssets = new Map();
 
   function button(label, action, text = label) {
     const node = el('button', '', text); node.type = 'button'; node.title = label; node.setAttribute('aria-label', label); node.addEventListener('click', action); return node;
   }
   function makeConversation() { return { id: uid(), title: 'Новый разговор', createdAt: Date.now(), messages: [] }; }
   function setOpen(open) {
-    host.hidden = !open; toggle.hidden = open;
+    host.hidden = !open;
     toggle.setAttribute('aria-expanded', String(open));
+    toggle.title = open ? 'Свернуть AI помощника' : 'Открыть AI помощника';
     document.body.classList.toggle('ai-open', open);
     document.documentElement.style.setProperty('--ai-panel-width', `${width}px`);
     window.dispatchEvent(new Event('resize'));
     if (open) input.focus();
   }
-  toggle.onclick = () => setOpen(true);
+  toggle.onclick = () => setOpen(host.hidden);
   function setBusy(value) {
     busy = value; send.hidden = value; stop.hidden = !value;
     conversationsSelect.disabled = value; newChat.disabled = value; clear.disabled = value; mode.disabled = value; attach.disabled = value;
     input.disabled = value; send.disabled = !bridge || !connected;
+    imageGeneration.disabled = value || !connected || !imageGenerationSupported;
   }
   function updateConnection(state) {
     connected = Boolean(state?.connected || state?.status === 'connected' || state?.ready);
     status.textContent = state?.message || (connected ? 'Codex подключён' : 'Codex не подключён');
     connect.hidden = connected; login.hidden = connected && state?.authenticated !== false; disconnect.hidden = !connected;
     connect.disabled = login.disabled = !bridge; send.disabled = !connected || busy;
+    imageGenerationSupported = Boolean(state?.imageGeneration || state?.capabilities?.imageGeneration);
+    imageGeneration.disabled = busy || !connected || !imageGenerationSupported;
+    if (!imageGenerationSupported) imageGeneration.checked = false;
+    imageGenerationLabel.title = imageGenerationSupported ? 'Включается отдельно для каждого запроса' : state?.imageGenerationReason || 'Подключите Codex с поддержкой генерации изображений';
     if (state) notice.textContent = `Для ответа Codex получает запрос, нужные слайды и вложения. Интернет необходим. ${state.imageGenerationReason || (state.capabilities?.imageGeneration ? 'Генерация изображений доступна.' : 'Генерация изображений пока не подключена.')}`;
     for (const option of mode.options) { const settings = state?.modes?.[option.value]; if (settings) option.title = `${settings.displayName || settings.model}: ${settings.effort || 'настройка модели'}`; }
   }
@@ -109,15 +123,20 @@ export function mountAssistant(adapter, bridge = window.presentationAI) {
     conversationsSelect.replaceChildren(...conversations.map(item => { const option = el('option', '', item.title); option.value = item.id; return option; }));
     conversationsSelect.value = active.id;
   }
-  conversationsSelect.onchange = () => { active = conversations.find(item => item.id === conversationsSelect.value); renderMessages(); };
+  conversationsSelect.onchange = () => { active = conversations.find(item => item.id === conversationsSelect.value); generatedAssets.clear(); toolAttachments = []; renderMessages(); };
   function renderMessages() {
     messages.replaceChildren();
     if (!active?.messages.length) messages.append(el('div', 'ai-empty', 'Создайте презентацию с нуля или попросите изменить выбранный слайд. Небольшие правки можно отменить, крупные изменения сначала появятся в предпросмотре.'));
     for (const message of active?.messages || []) {
       const bubble = el('article', `ai-message ai-message-${message.role}`);
-      bubble.append(el('b', 'ai-message-author', message.role === 'user' ? 'Вы' : 'Codex'), el('div', 'ai-message-text', message.text || ''));
+      bubble.append(el('b', 'ai-message-author', message.role === 'user' ? 'Вы' : 'AI'), el('div', 'ai-message-text', message.text || ''));
       if (message.attachments?.length) bubble.append(el('small', '', message.attachments.map(file => file.name).join(', ')));
       if (message.proposal) renderProposal(bubble, message);
+      if (message.generatedAsset) {
+        if (/^data:image\/(png|jpeg|webp|gif);base64,/i.test(message.generatedAsset.dataUrl || '')) {
+          const preview = el('img', 'ai-generated-image'); preview.src = message.generatedAsset.dataUrl; preview.alt = message.generatedAsset.name || 'Сгенерированное изображение'; bubble.append(preview);
+        } else bubble.append(el('small', '', 'Изображение было создано в этом разговоре. Вставленные изображения сохранены в презентации.'));
+      }
       messages.append(bubble);
     }
     messages.scrollTop = messages.scrollHeight;
@@ -169,7 +188,12 @@ export function mountAssistant(adapter, bridge = window.presentationAI) {
     try { await adapter.applyProposal(message.proposal); message.proposalState = 'Применено'; renderMessages(); save(); } catch (error) { showError(error); }
   }
   async function save() {
-    const snapshot = { documentId, conversations: conversations.map(conversation => ({ ...conversation, messages: conversation.messages.map(message => message.proposal ? { ...message, proposal: { id: message.proposal.id, summary: message.proposal.summary }, proposalRestored: true, proposalState: message.proposalState || 'Предпросмотр завершён — запросите изменения повторно' } : message) })) };
+    const snapshot = { documentId, conversations: conversations.map(conversation => ({ ...conversation, messages: conversation.messages.map(message => {
+      const stored = { ...message };
+      if (message.proposal) Object.assign(stored, { proposal: { id: message.proposal.id, summary: message.proposal.summary }, proposalRestored: true, proposalState: message.proposalState || 'Предпросмотр завершён — запросите изменения повторно' });
+      if (message.generatedAsset) stored.generatedAsset = { id: message.generatedAsset.id, name: message.generatedAsset.name };
+      return stored;
+    }) })) };
     try {
       if (bridge?.historySave) await bridge.historySave(snapshot);
       else localStorage.setItem(`presentation-ai:${documentId}`, JSON.stringify(snapshot.conversations));
@@ -185,7 +209,7 @@ export function mountAssistant(adapter, bridge = window.presentationAI) {
     clearTimeout(saveTimer);
     if (documentId) await save();
     if (generation !== historyGeneration) return;
-    documentId = nextId; streaming = null; attachments = []; renderAttachments();
+    documentId = nextId; streaming = null; attachments = []; toolAttachments = []; generatedAssets.clear(); imageGeneration.checked = false; renderAttachments();
     try {
       const result = bridge?.historyLoad ? await bridge.historyLoad({ documentId }) : JSON.parse(localStorage.getItem(`presentation-ai:${documentId}`) || '[]');
       if (generation !== historyGeneration) return;
@@ -217,13 +241,15 @@ export function mountAssistant(adapter, bridge = window.presentationAI) {
     await syncDocument();
     const prompt = input.value.trim();
     const requestAttachments = attachments;
-    adapter.setAttachments?.(requestAttachments);
+    const generateImages = imageGeneration.checked && imageGenerationSupported;
+    toolAttachments = [...new Map([...generatedAssets.values(), ...requestAttachments].map(file => [file.id, file])).values()];
+    adapter.setAttachments?.(toolAttachments);
     active.messages.push({ role: 'user', text: prompt, attachments: requestAttachments.map(({ name }) => ({ name })) });
     if (active.title === 'Новый разговор') active.title = prompt.slice(0, 45);
     streaming = { role: 'assistant', text: '' }; active.messages.push(streaming);
-    input.value = ''; attachments = []; renderAttachments(); renderHistory(); renderMessages(); setBusy(true); await save();
+    input.value = ''; attachments = []; imageGeneration.checked = false; renderAttachments(); renderHistory(); renderMessages(); setBusy(true); await save();
     try {
-      const result = await bridge.send({ documentId, conversationId: active.id, prompt, mode: mode.value, attachments: requestAttachments, context: adapter.getContext() });
+      const result = await bridge.send({ documentId, conversationId: active.id, prompt, mode: mode.value, imageGeneration: generateImages, attachments: requestAttachments, context: adapter.getContext() });
       if (result?.text && streaming && !streaming.text) streaming.text = result.text;
       if (result?.proposal) await receiveProposal(result.proposal);
       if (result?.done) { setBusy(false); streaming = null; }
@@ -245,6 +271,19 @@ export function mountAssistant(adapter, bridge = window.presentationAI) {
     if (event.type === 'delta') { if (!streaming) { streaming = { role: 'assistant', text: '' }; active.messages.push(streaming); } streaming.text += event.text || ''; renderMessages(); scheduleSave(); }
     if (event.type === 'status') status.textContent = event.text || event.message || 'Выполнение…';
     if (event.type === 'proposal') await receiveProposal(event.proposal);
+    if (event.type === 'generated-image') {
+      const asset = event.asset;
+      if (!asset?.id || !/^data:image\/(png|jpeg|webp|gif);base64,/i.test(asset.dataUrl || '')) { showError(new Error('Codex вернул изображение в неподдерживаемом формате')); return; }
+      if (!generatedAssets.has(asset.id)) {
+        generatedAssets.set(asset.id, asset);
+        toolAttachments = [...new Map([...toolAttachments, asset].map(file => [file.id, file])).values()];
+        adapter.setAttachments?.(toolAttachments);
+        const storedMessage = active.messages.find(message => message.generatedAsset?.id === asset.id);
+        if (storedMessage) storedMessage.generatedAsset = asset;
+        else active.messages.push({ role: 'assistant', text: 'Изображение создано и доступно для вставки на слайд.', generatedAsset: asset });
+        renderMessages(); scheduleSave();
+      }
+    }
     if (event.type === 'usage') {
       const total = event.usage?.total?.totalTokens ?? event.usage?.totalTokens;
       if (Number.isFinite(total)) { usage.hidden = false; usage.textContent = `Использовано в разговоре: ${total.toLocaleString('ru-RU')} токенов`; }
