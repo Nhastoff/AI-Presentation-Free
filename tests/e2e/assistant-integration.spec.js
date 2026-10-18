@@ -88,6 +88,51 @@ test('real editor previews major batches, applies accepted changes and discards 
   expect(errors).toEqual([]);
 });
 
+test('chat undo restores a replaced deck after an object was clicked without changing it', async ({ page }) => {
+  const errors = await openEditor(page);
+  const initial = await summary(page);
+  const original = await tool(page, 'presentation_read_slides', { slideIds: initial.slides.map(slide => slide.id), includeNotes: true });
+  const replacement = { id: initial.documentId, title: 'Hearthstone', slides: Array.from({ length: 4 }, (_, index) => ({ id: `hearthstone-${index}`, background: '#101B2B', elements: [{ id: `hs-title-${index}`, type: 'text', text: `Hearthstone ${index + 1}`, x: 80, y: 80, w: 900, h: 80, color: '#FFFFFF' }] })) };
+  await edit(page, initial, [{ type: 'replace_deck', deck: replacement }], 'replace-undo-test');
+  await page.getByRole('button', { name: 'Применить изменения', exact: true }).click();
+  await expect(page.locator('.slide-row')).toHaveCount(4);
+  await page.locator('#stage [data-element="hs-title-0"]').click();
+  expect((await summary(page)).title).toBe('Hearthstone');
+  await page.getByRole('button', { name: 'Отменить изменения', exact: true }).click();
+  await expect(page.locator('.ai-proposal-state')).toHaveText('Отменено');
+  await expect(page.locator('.slide-row')).toHaveCount(3);
+  const restored = await summary(page);
+  expect(restored.revision).toBe(initial.revision);
+  expect((await tool(page, 'presentation_read_slides', { slideIds: initial.slides.map(slide => slide.id), includeNotes: true })).slides).toEqual(original.slides);
+  await expect.poll(() => page.evaluate(() => JSON.parse(localStorage.getItem('presentation-free.deck.v1') || 'null')?.title)).toBe(initial.title);
+  await page.locator('[data-action="redo"]').first().click();
+  await expect(page.locator('.slide-row')).toHaveCount(4);
+  expect((await summary(page)).title).toBe('Hearthstone');
+  await expect(page.locator('.ai-proposal-state')).toHaveText('Применено');
+  await page.getByRole('button', { name: 'Отменить изменения', exact: true }).click();
+  await expect(page.locator('.slide-row')).toHaveCount(3);
+  expect(errors).toEqual([]);
+});
+
+test('AI undo keeps manual edits and never claims success when restoration is refused', async ({ page }) => {
+  await openEditor(page);
+  const initial = await summary(page);
+  await edit(page, initial, [{ type: 'update_deck', patch: { title: 'AI title' } }], 'protected-undo');
+  await page.getByLabel('Название презентации').fill('Моя ручная правка');
+  await page.getByLabel('Название презентации').press('Tab');
+  await page.getByRole('button', { name: 'Отменить изменения', exact: true }).click();
+  await expect(page.locator('.ai-status')).toContainText('документ изменился');
+  await expect(page.locator('.ai-proposal-state')).toHaveText('Применено');
+  await expect(page.getByLabel('Название презентации')).toHaveValue('Моя ручная правка');
+  await page.locator('[data-action="undo"]').first().click();
+  await expect(page.getByLabel('Название презентации')).toHaveValue('AI title');
+  const object = page.locator('#stage [data-element]').first();
+  await object.click();
+  await page.locator('[data-action="undo"]').first().click();
+  await expect(page.getByLabel('Название презентации')).toHaveValue(initial.title);
+  await expect(page.locator('.ai-proposal-state')).toHaveText('Отменено');
+});
+
 test('real editor protects manual changes from stale tool calls and stale preview approval', async ({ page }) => {
   const errors = await openEditor(page);
   const initial = await summary(page);
