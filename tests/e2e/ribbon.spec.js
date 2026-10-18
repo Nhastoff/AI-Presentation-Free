@@ -47,7 +47,7 @@ test('an object can be dragged and resized and undo restores geometry', async ({
   await page.mouse.down(); await page.mouse.move(box.x + box.width / 2 + 40, box.y + box.height / 2 + 20, { steps: 4 }); await page.mouse.up();
   expect((await element.boundingBox()).width).toBeGreaterThan(moved.width + 30);
   await page.locator('[data-action="undo"]').click();
-  expect((await element.boundingBox()).width).toBeCloseTo(moved.width, 0);
+  await expect.poll(async () => (await element.boundingBox()).width).toBeCloseTo(moved.width, 0);
 });
 
 test('SVG images convert to portable PNG and persist after reload', async ({ page }) => {
