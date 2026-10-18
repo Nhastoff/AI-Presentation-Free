@@ -1,6 +1,6 @@
 {
   "name": "ai-presentation-free",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "AI Presentation Free — редактор презентаций для Windows и macOS",
   "private": true,
   "type": "module",
@@ -14,11 +14,13 @@
     "start": "electron .",
     "test": "node --test tests/*.test.js",
     "test:e2e": "playwright test",
+    "test:desktop": "node tests/desktop-smoke.cjs",
     "dist:win": "npm run build && electron-builder --win nsis portable",
     "dist:mac": "npm run build && electron-builder --mac dmg --x64 --arm64"
   },
   "dependencies": {
     "jszip": "^3.10.1",
+    "pdfjs-dist": "^6.4.299",
     "pptxgenjs": "^3.12.0"
   },
   "devDependencies": {
@@ -30,14 +32,43 @@
   "build": {
     "appId": "org.presentationfree.desktop",
     "productName": "AI Presentation Free",
-    "directories": { "output": "release" },
-    "files": ["dist/**/*", "electron/**/*", "assets/**/*", "package.json"],
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "assets/**/*",
+      "package.json"
+    ],
     "asar": true,
     "artifactName": "AI-Presentation-Free-${version}-${os}-${arch}.${ext}",
-    "win": { "icon": "assets/icon.ico", "target": ["nsis", "portable"] },
-    "nsis": { "artifactName": "AI-Presentation-Free-${version}-Setup-${arch}.exe", "oneClick": false, "allowToChangeInstallationDirectory": true, "createDesktopShortcut": true },
-    "portable": { "artifactName": "AI-Presentation-Free-${version}-Portable-${arch}.exe" },
-    "mac": { "icon": "assets/icon.icns", "target": ["dmg"], "category": "public.app-category.productivity", "identity": null },
-    "dmg": { "title": "AI Presentation Free" }
+    "win": {
+      "icon": "assets/icon.ico",
+      "target": [
+        "nsis",
+        "portable"
+      ]
+    },
+    "nsis": {
+      "artifactName": "AI-Presentation-Free-${version}-Setup-${arch}.exe",
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true
+    },
+    "portable": {
+      "artifactName": "AI-Presentation-Free-${version}-Portable-${arch}.exe"
+    },
+    "mac": {
+      "icon": "assets/icon.icns",
+      "target": [
+        "dmg"
+      ],
+      "category": "public.app-category.productivity",
+      "identity": null
+    },
+    "dmg": {
+      "title": "AI Presentation Free"
+    }
   }
 }

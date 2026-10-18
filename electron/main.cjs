@@ -3,6 +3,7 @@ const path = require('node:path');
 const fs = require('node:fs/promises');
 
 let mainWindow;
+require('./assistant-ipc.cjs').registerAssistant(() => mainWindow);
 const developmentUrl = process.env.PRESENTATION_FREE_DEV_URL;
 
 function openExternal(url) {
