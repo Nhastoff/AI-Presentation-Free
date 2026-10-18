@@ -36,15 +36,18 @@ test('an object can be dragged and resized and undo restores geometry', async ({
   await page.goto('/');
   await page.locator('[data-action="add"]').first().click();
   await page.locator('[data-action="rect"]').click();
+  await expect(page.locator('#stage')).toHaveAttribute('data-scale', /\d/);
   const element = page.locator('#stage [data-element]');
   const initial = await element.boundingBox();
   await page.mouse.move(initial.x + initial.width / 2, initial.y + initial.height / 2);
   await page.mouse.down(); await page.mouse.move(initial.x + initial.width / 2 + 60, initial.y + initial.height / 2 + 30, { steps: 4 }); await page.mouse.up();
+  await expect(page.locator('#stage')).toHaveAttribute('data-scale', /\d/);
   const moved = await element.boundingBox();
   expect(moved.x).toBeGreaterThan(initial.x + 50);
   const handle = page.locator('[data-resize="se"]'); const box = await handle.boundingBox();
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
   await page.mouse.down(); await page.mouse.move(box.x + box.width / 2 + 40, box.y + box.height / 2 + 20, { steps: 4 }); await page.mouse.up();
+  await expect(page.locator('#stage')).toHaveAttribute('data-scale', /\d/);
   expect((await element.boundingBox()).width).toBeGreaterThan(moved.width + 30);
   await page.locator('[data-action="undo"]').click();
   await expect.poll(async () => (await element.boundingBox()).width).toBeCloseTo(moved.width, 0);
