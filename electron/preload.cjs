@@ -8,7 +8,7 @@ contextBridge.exposeInMainWorld('presentationFree', Object.freeze({
 contextBridge.exposeInMainWorld('presentationAI', Object.freeze({
   status: () => ipcRenderer.invoke('assistant:status'),
   connect: options => ipcRenderer.invoke('assistant:connect', options),
-  login: () => ipcRenderer.invoke('assistant:login'),
+  login: options => ipcRenderer.invoke('assistant:login', options),
   disconnect: () => ipcRenderer.invoke('assistant:disconnect'),
   send: request => ipcRenderer.invoke('assistant:send', request),
   stop: () => ipcRenderer.invoke('assistant:stop'),
