@@ -19,6 +19,7 @@ function setup(savedThreads = {}) {
     status() { return { connected: !!this.connected }; }
     async send(request) { this.lastRequest = request; return { threadId: request.threadId || 'created-thread', turnId: 'turn-1' }; }
     disconnect() { this.connected = false; }
+    getGeneratedImage(id) { return { id, name: 'Codex.png', mimeType: 'image/png', size: 30, dataUrl: 'data:image/png;base64,test' }; }
   }
   const fsMock = {
     mkdir: async () => {},
@@ -78,6 +79,7 @@ test('tool calls route to active document and resolve only matching editor repli
   await f.invoke('connect', { tools: [tool('presentation_summary')] });
   await f.invoke('send', { documentId: 'document-1', conversationId: 'conversation-1', prompt: 'Read', mode: 'economy' });
   const resultPromise = f.instances[0].options.onToolCall({ tool: 'presentation_summary', arguments: {} });
+  await new Promise(resolve => setImmediate(resolve));
   const message = f.sent.at(-1).event;
   assert.equal(message.type, 'tool');
   assert.equal(message.documentId, 'document-1');
@@ -103,4 +105,36 @@ test('disconnect settles outstanding editor calls and releases active task', asy
   assert.equal((await resultPromise).ok, false);
   await f.invoke('connect', { tools: [tool('presentation_summary')] });
   assert.equal(f.instances.length, 2);
+});
+
+test('generated images register before the model can list them and stay scoped to their conversation', async () => {
+  const f = setup();
+  await f.invoke('connect', { tools: [tool('presentation_list_generated_images')] });
+  await f.invoke('send', { documentId: 'document-1', conversationId: 'conversation-1', prompt: 'Generate', imageGeneration: true });
+  assert.equal(f.instances[0].lastRequest.imageGeneration, true);
+  const id = 'generated-12345678-1234-4234-8234-123456789abc';
+  f.instances[0].options.onEvent({ method: 'image/generated', params: { attachmentId: id } });
+  const listed = await f.instances[0].options.onToolCall({ tool: 'presentation_list_generated_images', arguments: {} });
+  assert.equal(listed.images[0].id, id);
+  const event = f.sent.find(item => item.event.type === 'generated-image').event;
+  assert.equal(event.documentId, 'document-1');
+  assert.equal(event.conversationId, 'conversation-1');
+  assert.match(event.asset.dataUrl, /^data:image\/png/);
+  const index = [...f.writes.entries()].find(([name]) => name.endsWith('generated-images-index.json'))[1];
+  assert(!index.includes('data:image'));
+  f.instances[0].options.onEvent({ method: 'turn/completed', params: { turn: { status: 'completed' } } });
+  await f.invoke('send', { documentId: 'document-1', conversationId: 'conversation-2', prompt: 'Other chat' });
+  assert.equal((await f.instances[0].options.onToolCall({ tool: 'presentation_list_generated_images' })).images.length, 0);
+  assert.equal(f.instances[0].lastRequest.imageGeneration, false);
+});
+
+test('preload forwards first-login configuration to main', () => {
+  const exposed = {}, calls = [];
+  const preload = fs.readFileSync(new URL('../electron/preload.cjs', import.meta.url), 'utf8');
+  const context = vm.createContext({ process: { platform: 'darwin' }, require: () => ({ contextBridge: { exposeInMainWorld: (name, value) => exposed[name] = value }, ipcRenderer: { invoke: (...args) => calls.push(args) } }) });
+  new vm.Script(preload).runInContext(context);
+  const options = { tools: [tool('presentation_edit')], instructions: 'Register tools' };
+  exposed.presentationAI.login(options);
+  assert.equal(calls[0][0], 'assistant:login');
+  assert.equal(calls[0][1], options);
 });

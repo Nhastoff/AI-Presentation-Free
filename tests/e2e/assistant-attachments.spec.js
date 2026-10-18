@@ -54,7 +54,7 @@ test('image attachment analysis is an explicit opt-in before sending', async ({ 
     };
   });
   await page.goto('/');
-  await page.getByRole('button', { name: '✦ Помощник', exact: true }).click();
+  await page.getByRole('button', { name: 'AI', exact: true }).click();
   await page.getByRole('button', { name: 'Прикрепить материалы', exact: true }).click();
   const checkbox = page.getByRole('checkbox', { name: 'Анализировать изображение (расходует больше лимита)' });
   await expect(checkbox).not.toBeChecked();
@@ -83,7 +83,7 @@ test('built-compatible attachment UI loads the PDF worker and sends extracted PD
     };
   }, files);
   await page.goto(process.env.PF_BUILT_URL || '/');
-  await page.getByRole('button', { name: '✦ Помощник', exact: true }).click();
+  await page.getByRole('button', { name: 'AI', exact: true }).click();
   await page.getByRole('button', { name: 'Прикрепить материалы', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Убрать input.pdf', exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Убрать input.docx', exact: true })).toBeVisible();

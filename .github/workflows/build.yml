@@ -9,7 +9,7 @@ on:
       release_tag:
         description: New release tag
         type: string
-        default: v0.3.0
+        default: v0.3.1
   pull_request:
     branches: [main]
   push:
@@ -80,4 +80,4 @@ jobs:
           cd release-assets
           sha256sum *.dmg *.exe > SHA256SUMS.txt
           cd ..
-          gh release create "$RELEASE_TAG" release-assets/* --title "AI Presentation Free $RELEASE_TAG" --notes-file docs/release-0.3.0.md --target "${{ github.sha }}"
+          gh release create "$RELEASE_TAG" release-assets/* --title "AI Presentation Free $RELEASE_TAG" --notes-file docs/release-0.3.1.md --target "${{ github.sha }}"

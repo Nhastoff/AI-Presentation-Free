@@ -24,7 +24,7 @@ const { pathToFileURL } = require('node:url');
     await application.evaluate(({ app }, target) => app.setPath('userData', target), profile);
     const page = await application.firstWindow();
     await page.waitForLoadState('domcontentloaded');
-    await page.getByRole('button', { name: '✦ Помощник', exact: true }).waitFor({ timeout: 30000 });
+    await page.getByRole('button', { name: 'AI', exact: true }).waitFor({ timeout: 30000 });
     return page;
   };
   try {
@@ -49,12 +49,12 @@ const { pathToFileURL } = require('node:url');
     assert.equal(bridge.process, 'undefined');
     assert.equal(bridge.rawIPC, 'undefined');
     assert.equal(bridge.exportPdf, 'function');
-    await page.getByRole('button', { name: '✦ Помощник', exact: true }).click();
+    await page.getByRole('button', { name: 'AI', exact: true }).click();
     assert.equal(await page.locator('.ai-panel').isVisible(), true);
     await page.getByLabel('Сообщение помощнику').fill('Текст сохраняется при сворачивании');
     await page.getByRole('button', { name: 'Свернуть', exact: true }).click();
     assert.equal(await page.locator('.ai-panel').isVisible(), false);
-    await page.getByRole('button', { name: '✦ Помощник', exact: true }).click();
+    await page.getByRole('button', { name: 'AI', exact: true }).click();
     assert.equal(await page.getByLabel('Сообщение помощнику').inputValue(), 'Текст сохраняется при сворачивании');
     const documentId = `desktop-smoke-${Date.now()}`;
     const conversations = [{ id: 'smoke-conversation', title: 'Проверка истории', messages: [{ role: 'user', text: 'Проверка' }], threadId: 'smoke-thread' }];
@@ -83,6 +83,33 @@ const { pathToFileURL } = require('node:url');
       console.log('Codex is absent; verified the user-facing installation error. Set PF_CODEX_SMOKE_REQUIRED=1 to require initialization.');
     }
     assert.deepEqual(pageErrors, []);
+    // Exercise actual file:// PPTX/image export in packaged Electron as well as
+    // the browser suite. Only the destination picker is automated.
+    const project = { id: 'desktop-export', title: 'Desktop image export', slides: [{ id: 'desktop-slide', background: '#FFFFFF', elements: [
+      { id: 'desktop-title', type: 'text', text: 'Editable export', x: 40, y: 40, w: 600, h: 80 },
+      { id: 'desktop-image', type: 'image', x: 40, y: 150, w: 200, h: 100, src: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a9ioAAAAASUVORK5CYII=' },
+    ] }] };
+    await page.locator('#open-file').setInputFiles({ name: 'desktop-image.pfree.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(project)) });
+    const exportedPath = path.join(profile, 'desktop-image.pptx');
+    await application.evaluate(({ session }, target) => {
+      global.__desktopExport = null;
+      session.defaultSession.once('will-download', (_event, item) => { item.setSavePath(target); item.once('done', (_event, state) => { global.__desktopExport = state; }); });
+    }, exportedPath);
+    await page.locator('[data-action="export"]').first().click();
+    const exportDeadline = Date.now() + 30000;
+    let exportState;
+    while (Date.now() < exportDeadline) {
+      exportState = await application.evaluate(() => global.__desktopExport);
+      if (exportState) break;
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    assert.equal(exportState, 'completed', 'Native Electron download completes');
+    const archive = await require('jszip').loadAsync(await fs.readFile(exportedPath));
+    const slideXml = await archive.file('ppt/slides/slide1.xml').async('string');
+    assert(slideXml.includes('Editable export') && slideXml.includes('<p:pic>'));
+    assert(Object.keys(archive.files).some(name => name.startsWith('ppt/media/') && name.endsWith('.png')));
+    assert.deepEqual(pageErrors, []);
+    console.log('Native PPTX export contains editable text and an embedded PNG.');
     await application.close(); application = null;
     const reopened = await launch();
     const restored = await reopened.evaluate(documentId => window.presentationAI.historyLoad({ documentId }), documentId);

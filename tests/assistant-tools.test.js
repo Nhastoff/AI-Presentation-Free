@@ -110,3 +110,30 @@ test('comment creation and resolving use stable IDs and bounded reading', () => 
   const { result } = executeAssistantTool(applied, 'presentation_read_slides', { slideIds: [deck.slides[0].id] });
   assert.deepEqual(result.slides[0].comments, [{ id: 'review-note', resolved: true, text: 'Check source' }]);
 });
+
+test('native image registry exposes a metadata-only lookup schema and supports inserting and replacing assets', () => {
+  const lookup = ASSISTANT_TOOLS.find(tool => tool.name === 'presentation_list_generated_images');
+  assert.deepEqual(lookup.inputSchema.properties, {});
+  assert.deepEqual(lookup.inputSchema.required, []);
+  assert.equal(lookup.inputSchema.additionalProperties, false);
+  const original = validateDeck(createDeck());
+  const registry = [{ id: 'generated:current-conversation:1', name: 'generated-1.png', dataUrl: 'data:image/png;base64,AAAA' }];
+  const insertion = executeAssistantTool(original, 'presentation_edit', {
+    requestId: 'generated-image-insert', baseRevision: getDeckRevision(original),
+    operations: [{ type: 'create_elements', slideId: original.slides[0].id, elements: [{ id: 'generated-artwork', type: 'image', attachmentId: registry[0].id }] }],
+  }, { attachments: registry });
+  const inserted = applyProposal(original, insertion.proposal);
+  assert.equal(inserted.slides[0].elements.at(-1).src, registry[0].dataUrl);
+  assert.equal(inserted.slides[0].elements.at(-1).attachmentId, undefined);
+  const nextAsset = { id: 'generated:current-conversation:2', name: 'generated-2.png', dataUrl: 'data:image/png;base64,AQAB' };
+  const replacement = executeAssistantTool(inserted, 'presentation_edit', {
+    requestId: 'generated-image-replace', baseRevision: getDeckRevision(inserted),
+    operations: [{ type: 'update_element', slideId: inserted.slides[0].id, elementId: 'generated-artwork', patch: { attachmentId: nextAsset.id } }],
+  }, { attachments: [nextAsset] });
+  const updated = applyProposal(inserted, replacement.proposal);
+  assert.equal(updated.slides[0].elements.at(-1).src, nextAsset.dataUrl);
+  assert.equal(updated.slides[0].elements.at(-1).id, 'generated-artwork');
+  const read = executeAssistantTool(updated, 'presentation_read_slides', { slideIds: [updated.slides[0].id] });
+  assert.equal(read.result.slides[0].elements.at(-1).hasImage, true);
+  assert.ok(!JSON.stringify(read.result).includes('base64'));
+});

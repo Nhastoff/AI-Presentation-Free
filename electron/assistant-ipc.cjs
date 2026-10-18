@@ -7,6 +7,8 @@ const { CodexService } = require('./codex-service.cjs');
 function registerAssistant(getWindow) {
   let service, active, tools = [], instructions = '';
   const conversations = new Map(), pending = new Map();
+  const generatedImages = new Map();
+  let assetQueue = Promise.resolve();
   let loadedConversations = false;
   const root = () => path.join(app.getPath('userData'), 'assistant');
   const emit = event => { const win = getWindow(); if (win && !win.isDestroyed()) win.webContents.send('assistant:event', event); };
@@ -18,7 +20,23 @@ function registerAssistant(getWindow) {
       openExternal: url => { const u = new URL(url); if (u.protocol !== 'https:' || !['auth.openai.com','auth0.openai.com','chatgpt.com'].includes(u.hostname)) throw new Error('Неизвестный адрес авторизации'); return shell.openExternal(url); },
       onEvent: ({ method, params = {} }) => {
         const conversationId = active?.conversationId;
-        if (method === 'connection/status') emit({ type: 'connection', ...params });
+        if (method === 'image/generated' && active && params.attachmentId) {
+          const scope = { ...active }, owner = service;
+          assetQueue = assetQueue.then(async () => {
+            const asset = await owner.getGeneratedImage(params.attachmentId);
+            if (!asset) throw new Error('Codex не вернул готовое изображение');
+            const key = `${scope.documentId}:${scope.conversationId}`;
+            const images = generatedImages.get(key) || [];
+            if (!images.some(image => image.id === asset.id)) images.push({ id: asset.id, name: asset.name });
+            generatedImages.set(key, images.slice(-40));
+            const target = path.join(root(), 'generated-images-index.json');
+            await fs.writeFile(`${target}.tmp`, JSON.stringify(Object.fromEntries(generatedImages)), { mode: 0o600 });
+            await fs.rename(`${target}.tmp`, target);
+            emit({ type: 'generated-image', ...scope, asset });
+          }).catch(error => emit({ type: 'error', conversationId: scope.conversationId, message: `Не удалось сохранить изображение: ${error.message}` }));
+        }
+        else if (method === 'image/generationFailed') emit({ type: 'status', conversationId, text: params.message || 'Codex не смог сгенерировать изображение' });
+        else if (method === 'connection/status') emit({ type: 'connection', ...params });
         else if (method === 'connection/error' || method === 'error' || method === 'assistant/timeout') {
           emit({ type: 'error', conversationId, message: params.message || params.error?.message || 'Задача Codex прервана. Подключитесь снова.' });
           if (method === 'connection/error') { active = null; for (const p of pending.values()) { clearTimeout(p.timer); p.resolve({ ok: false, error: 'Соединение прервано' }); } pending.clear(); }
@@ -27,15 +45,24 @@ function registerAssistant(getWindow) {
         else if (method === 'turn/completed') {
           emit({ type: params.turn?.status === 'failed' ? 'error' : 'done', conversationId, cancelled: params.turn?.status === 'interrupted', message: params.turn?.error?.message });
           active = null;
-        } else if (method === 'item/started') emit({ type: 'status', conversationId, text: params.item?.type === 'webSearch' ? 'Поиск источников…' : 'Codex работает…' });
+        } else if (method === 'item/started') emit({ type: 'status', conversationId, text: params.item?.type === 'webSearch' ? 'Поиск источников…' : params.item?.type === 'imageGeneration' ? 'Генерация изображения…' : 'Codex работает…' });
         else if (method === 'thread/tokenUsage/updated') emit({ type: 'usage', conversationId, usage: params.tokenUsage });
       },
-      onToolCall: call => new Promise((resolve, reject) => {
+      onToolCall: async call => {
+        const scope = active;
+        await assetQueue;
+        if (!scope || active !== scope) return { ok: false, error: 'Задача уже завершена' };
+        if (call.tool === 'presentation_list_generated_images') {
+          const images = active ? generatedImages.get(`${active.documentId}:${active.conversationId}`) || [] : [];
+          return { ok: true, images };
+        }
+        return new Promise((resolve, reject) => {
         const requestId = crypto.randomUUID();
         const timer = setTimeout(() => { pending.delete(requestId); reject(new Error('Редактор не ответил')); }, 110000);
         pending.set(requestId, { resolve, timer });
         emit({ type: 'tool', requestId, conversationId: active?.conversationId, documentId: active?.documentId, name: call.tool, arguments: call.arguments });
-      }),
+        });
+      },
     });
     return service;
   };
@@ -52,6 +79,13 @@ function registerAssistant(getWindow) {
     await fs.mkdir(root(), { recursive: true });
     if (!loadedConversations) {
       try { const saved = JSON.parse(await fs.readFile(path.join(root(), 'threads.json'), 'utf8')); for (const [key, value] of Object.entries(saved)) if (typeof value === 'string') conversations.set(key, value); } catch (e) { if (e.code !== 'ENOENT') throw new Error('Не удалось прочитать список разговоров'); }
+      try {
+        const raw = await fs.readFile(path.join(root(), 'generated-images-index.json'), 'utf8');
+        if (raw.length > 2000000) throw new Error('Image index too large');
+        for (const [key, images] of Object.entries(JSON.parse(raw))) {
+          if (/^[A-Za-z0-9_-]{1,100}:[A-Za-z0-9_-]{1,100}$/.test(key) && Array.isArray(images)) generatedImages.set(key, images.filter(image => validId(image.id) && typeof image.name === 'string').slice(-40));
+        }
+      } catch (e) { if (e.code !== 'ENOENT') throw new Error('Не удалось прочитать список изображений'); }
       loadedConversations = true;
     }
     if (service) { service.tools = tools; service.instructions = instructions; }
@@ -71,7 +105,17 @@ function registerAssistant(getWindow) {
       const context = { ...arg.context, attachments };
       if (JSON.stringify(context).length > 1200000) throw new Error('Слишком большой контекст');
       const key = `${arg.documentId}:${arg.conversationId}`;
+      await assetQueue;
+      const availableImages = [];
+      for (const image of generatedImages.get(key) || []) {
+        try {
+          const asset = await ensureService().getGeneratedImage(image.id);
+          if (asset) { availableImages.push(image); emit({ type: 'generated-image', ...active, asset }); }
+        } catch { emit({ type: 'status', ...active, text: `Изображение ${image.name} больше не доступно в хранилище. Уже вставленные картинки сохранены на слайдах.` }); }
+      }
+      generatedImages.set(key, availableImages);
       const result = await ensureService().send({ threadId: conversations.get(key), text: arg.prompt, context, mode: arg.mode,
+        imageGeneration: arg.imageGeneration === true,
         images: (arg.attachments || []).filter(a => a.analyzeImage && a.dataUrl).map(a => ({ url: a.dataUrl })) });
       conversations.set(key, result.threadId);
       const threadsPath = path.join(root(), 'threads.json');
