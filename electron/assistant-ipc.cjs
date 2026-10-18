@@ -45,7 +45,8 @@ function registerAssistant(getWindow) {
     return callback(arg);
   });
   handle('status', () => service?.status() || { connected: false });
-  handle('connect', async arg => {
+  const configure = async arg => {
+    if (active) throw new Error('Дождитесь завершения задачи перед настройкой подключения');
     if (Array.isArray(arg.tools) && arg.tools.length <= 10 && JSON.stringify(arg.tools).length < 100000) tools = arg.tools.filter(t => /^presentation_[a-z_]+$/.test(t.name));
     if (typeof arg.instructions === 'string') instructions = arg.instructions.slice(0, 20000);
     await fs.mkdir(root(), { recursive: true });
@@ -53,9 +54,13 @@ function registerAssistant(getWindow) {
       try { const saved = JSON.parse(await fs.readFile(path.join(root(), 'threads.json'), 'utf8')); for (const [key, value] of Object.entries(saved)) if (typeof value === 'string') conversations.set(key, value); } catch (e) { if (e.code !== 'ENOENT') throw new Error('Не удалось прочитать список разговоров'); }
       loadedConversations = true;
     }
+    if (service) { service.tools = tools; service.instructions = instructions; }
+  };
+  handle('connect', async arg => {
+    await configure(arg);
     return ensureService().connect();
   });
-  handle('login', () => ensureService().login());
+  handle('login', async arg => { await configure(arg); return ensureService().login(); });
   handle('disconnect', () => { service?.disconnect(); service = null; active = null; for (const p of pending.values()) { clearTimeout(p.timer); p.resolve({ ok: false, error: 'Отключено' }); } pending.clear(); return { connected: false }; });
   handle('send', async arg => {
     if (!validId(arg.conversationId) || !validId(arg.documentId) || typeof arg.prompt !== 'string' || arg.prompt.length > 50000) throw new Error('Некорректный запрос');
